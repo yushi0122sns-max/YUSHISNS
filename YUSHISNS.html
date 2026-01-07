@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>YUSHI SNS</title>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+<style>
+body{margin:0;font-family:sans-serif;background:#f3f4f8}
+header{background:linear-gradient(135deg,#667eea,#764ba2);color:#fff;padding:12px}
+.card{background:#fff;margin:10px;padding:10px;border-radius:12px}
+.dm{border-bottom:1px solid #eee;padding:6px}
+button{padding:6px 10px;border:0;border-radius:8px}
+#admin{background:#ffe}
+</style>
+</head>
+
+<body>
+<header>YUSHI SNS</header>
+
+<div id="auth" class="card">
+<h3>新規登録 / ログイン</h3>
+<input id="name" placeholder="ユーザー名"><br>
+<input id="pass" placeholder="パスワード or PIN"><br>
+<button onclick="register()">登録</button>
+<button onclick="login()">ログイン</button>
+</div>
+
+<div id="app" style="display:none">
+<div class="card">
+<textarea id="msg" placeholder="DM"></textarea>
+<button onclick="send()">送信</button>
+</div>
+
+<div id="dms" class="card"></div>
+
+<div id="admin" class="card" style="display:none">
+<h3>管理者</h3>
+<button onclick="loadStats()">📊統計</button>
+<div id="stats"></div>
+</div>
+</div>
+
+<script>
+/* ===== 設定 ===== */
+const supabase = supabase.createClient(
+  "https://psuzqzjodqyooodgtmov.supabase.co",
+  "ANON_PUBLIC_KEY"
+);
+const ADMIN="yushi";
+const REPORT_LIMIT=3;
+const BAN_LIMIT=5;
+const BAN_DAYS=7;
+
+/* ===== AI判定 ===== */
+const AI_WORDS={ "死ね":5,"殺す":7,"ばか":2,"fuck":3,"idiot":3 };
+const AI_BAN_SCORE=10;
+
+let me=null;
+
+/* ===== 登録 ===== */
+async function register(){
+  await supabase.from("users").insert({
+    name:name.value,
+    pass:pass.value
+  });
+  alert("登録完了");
+}
+
+/* ===== ログイン ===== */
+async function login(){
+  // BANチェック
+  const {data:ban}=await supabase.from("bans")
+    .select("*").eq("user_name",name.value).single();
+  if(ban && new Date(ban.banned_until)>new Date()){
+    return alert("BAN中\n解除:"+ban.banned_until);
+  }
+
+  const {data}=await supabase.from("users")
+    .select("*").eq("name",name.value).eq("pass",pass.value).single();
+  if(!data) return alert("失敗");
+
+  me=name.value;
+  auth.style.display="none";
+  app.style.display="block";
+  if(me===ADMIN) admin.style.display="block";
+  loadDM();
+  subscribe();
+}
+
+/* ===== DM送信 ===== */
+async function send(){
+  const text=msg.value;
+  const enc=btoa(text);
+
+  const {data}=await supabase.from("dms").insert({
+    from:me,to:"all",text:enc
+  }).select().single();
+
+  msg.value="";
+  aiJudge(data.id,me,text);
+}
+
+/* ===== DM表示 ===== */
+async function loadDM(){
+  const {data}=await supabase.from("dms").select("*").order("id");
+  dms.innerHTML=data.map(x=>`
+    <div class="dm" data-dm="${x.id}">
+      <b>${x.from}</b>:
+      ${atob(x.text)}
+      <button onclick="report(${x.id},'${x.from}')">🚨</button>
+    </div>`).join("");
+}
+
+/* ===== リアルタイム ===== */
+function subscribe(){
+  supabase.channel("dm")
+    .on("postgres_changes",{event:"INSERT",schema:"public",table:"dms"},
+      ()=>loadDM()
+    ).subscribe();
+}
+
+/* ===== 通報 ===== */
+async function report(dmId,user){
+  await supabase.from("reports").insert({
+    dm_id:dmId,target_name:user,reporter:me
+  });
+  autoCheck(dmId,user);
+}
+
+/* ===== 自動処理 ===== */
+async function autoCheck(dmId,user){
+  const {count:dmc}=await supabase.from("reports")
+    .select("*",{count:"exact",head:true}).eq("dm_id",dmId);
+  if(dmc>=REPORT_LIMIT){
+    document.querySelector(`[data-dm="${dmId}"]`).style.display="none";
+  }
+
+  const {count:uc}=await supabase.from("reports")
+    .select("*",{count:"exact",head:true}).eq("target_name",user);
+  if(uc>=BAN_LIMIT){
+    const until=new Date();
+    until.setDate(until.getDate()+BAN_DAYS);
+    await supabase.from("bans").upsert({
+      user_name:user,reason:"通報多数",banned_until:until
+    });
+  }
+}
+
+/* ===== AI判定 ===== */
+function aiScore(t){
+  let s=0,r=[];
+  for(let w in AI_WORDS){
+    if(t.includes(w)){s+=AI_WORDS[w];r.push(w);}
+  }
+  return {s,r};
+}
+
+async function aiJudge(dmId,user,text){
+  const a=aiScore(text);
+  if(a.s===0) return;
+
+  await supabase.from("ai_flags").insert({
+    dm_id:dmId,user_name:user,score:a.s,reason:a.r.join(",")
+  });
+
+  if(a.s>=AI_BAN_SCORE){
+    const until=new Date();
+    until.setDate(until.getDate()+BAN_DAYS);
+    await supabase.from("bans").upsert({
+      user_name:user,reason:"AI自動判定",banned_until:until
+    });
+    alert("AIにより一時停止");
+  }
+}
+
+/* ===== 管理者統計 ===== */
+async function loadStats(){
+  const u=await supabase.from("users").select("*",{count:"exact"});
+  const d=await supabase.from("dms").select("*",{count:"exact"});
+  const r=await supabase.from("reports").select("*",{count:"exact"});
+  const b=await supabase.from("bans").select("*",{count:"exact"});
+  const a=await supabase.from("ai_flags").select("*",{count:"exact"});
+
+  stats.innerHTML=`
+  👤${u.count} / 💬${d.count} / 🚨${r.count} /
+  ⛔${b.count} / 🧠${a.count}`;
+}
+</script>
+</body>
+</html>
