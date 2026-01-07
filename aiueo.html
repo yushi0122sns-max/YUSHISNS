@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>SNS Ultimate FINAL</title>
+
+<style>
+:root{
+  --grad:linear-gradient(135deg,#667eea,#764ba2);
+  --bg:#f3f4f8; --card:#fff;
+}
+*{box-sizing:border-box}
+body{margin:0;font-family:system-ui;background:var(--bg)}
+header{background:var(--grad);color:#fff;padding:32px}
+main{max-width:960px;margin:auto;padding:16px}
+.card{background:var(--card);border-radius:18px;padding:20px;
+box-shadow:0 10px 30px rgba(0,0,0,.1);margin-bottom:16px}
+.big{font-size:1.2rem}
+h1,h2{margin:.3em 0}
+input,textarea,select{
+  width:100%;padding:14px;border-radius:12px;
+  border:1px solid #ccc;margin:6px 0;font-size:1rem
+}
+button{
+  background:var(--grad);color:#fff;border:none;
+  padding:14px 18px;border-radius:14px;font-size:1rem
+}
+button.sub{background:#ddd;color:#333}
+.hide{display:none}
+.row{display:grid;gap:14px}
+@media(min-width:700px){.row{grid-template-columns:1fr 1fr}}
+.badge{font-size:.8rem;padding:4px 8px;border-radius:999px;background:#eee}
+.dm{border:1px solid #ddd;border-radius:12px;padding:10px;margin:8px 0}
+.anon{opacity:.75}
+small{color:#666}
+</style>
+</head>
+<body>
+
+<header>
+  <main>
+    <h1>SNS Ultimate</h1>
+    <div id="status"></div>
+  </main>
+</header>
+
+<main>
+
+<!-- 新規登録 -->
+<div id="reg" class="card big">
+<h2>新規登録</h2>
+<input id="rName" placeholder="ユーザー名">
+<input id="rAge" type="number" placeholder="年齢（6歳以上）">
+<input id="rPass" placeholder="パスワード（大/小/数字）">
+<input id="rPin" placeholder="8桁以上の数字PIN">
+<button onclick="register()">登録</button>
+<button class="sub" onclick="show('login')">ログインへ</button>
+</div>
+
+<!-- ログイン -->
+<div id="login" class="card big hide">
+<h2>ログイン</h2>
+<input id="lName" placeholder="ユーザー名">
+<input id="lKey" placeholder="PW または PIN">
+<button onclick="login()">ログイン</button>
+<button class="sub" onclick="show('reg')">新規登録へ</button>
+</div>
+
+<!-- アプリ -->
+<div id="app" class="hide">
+
+<div class="row">
+<div class="card">
+<h2>プロフィール</h2>
+<input id="pName">
+<textarea id="pBio" placeholder="自己紹介"></textarea>
+<label><input type="checkbox" id="pAnon"> 匿名モード</label>
+<button onclick="saveProfile()">保存</button>
+<button class="sub" onclick="deleteAccount(me())">自分のアカウント削除</button>
+</div>
+
+<div class="card">
+<h2>DM送信</h2>
+<input id="to" placeholder="相手ユーザー名">
+<textarea id="dmText"></textarea>
+<input type="file" id="file">
+<button onclick="sendDM()">送信</button>
+</div>
+</div>
+
+<div class="card">
+<h2>DM一覧（ログイン後）</h2>
+<button class="sub" onclick="downloadDM()">⬇ ダウンロード</button>
+<div id="dmList"></div>
+</div>
+
+</div>
+</main>
+
+<script>
+/* ===== 設定 ===== */
+const ADMIN="yushi";
+const NG=["死ね","殺す","ばか","バカ","fuck","idiot"];
+
+/* ===== ユーティリティ ===== */
+const enc=t=>btoa(unescape(encodeURIComponent(t)));
+const dec=t=>decodeURIComponent(escape(atob(t)));
+const users=()=>JSON.parse(localStorage.users||"[]");
+const saveUsers=u=>localStorage.users=JSON.stringify(u);
+const me=()=>localStorage.me;
+
+/* ===== 画面 ===== */
+function show(id){
+  ["reg","login","app"].forEach(x=>document.getElementById(x).classList.add("hide"));
+  document.getElementById(id).classList.remove("hide");
+}
+
+/* ===== 名前重複 ===== */
+function nameTaken(n){
+  return users().some(u=>u.name.toLowerCase()===n.toLowerCase());
+}
+
+/* ===== 認証判定 ===== */
+function validPW(p){return /[A-Z]/.test(p)&&/[a-z]/.test(p)&&/\d/.test(p)}
+function validPIN(p){return /^\d{8,}$/.test(p)}
+
+/* ===== 登録 ===== */
+function register(){
+  const n=rName.value.trim(), a=+rAge.value;
+  const pw=rPass.value.trim(), pin=rPin.value.trim();
+  if(!n||!a) return alert("空白不可");
+  if(a<6) return alert("6歳以上");
+  if(nameTaken(n)) return alert("同名不可");
+  if(!(validPW(pw)||validPIN(pin)))
+    return alert("PWまたは8桁以上PIN必須");
+
+  const u=users();
+  u.push({name:n,age:a,bio:"",anon:false,pass:pw,pin});
+  saveUsers(u); localStorage.me=n; init();
+}
+
+/* ===== ログイン ===== */
+function login(){
+  const n=lName.value.trim(), k=lKey.value.trim();
+  const u=users().find(x=>x.name.toLowerCase()===n.toLowerCase());
+  if(!u) return alert("存在しません");
+  if(k!==u.pass && k!==u.pin) return alert("認証失敗");
+  localStorage.me=u.name; init();
+}
+
+/* ===== 初期化 ===== */
+function init(){
+  const u=users().find(x=>x.name===me());
+  status.innerHTML=`ログイン中: <b>${u.name}</b>
+  <span class="badge">${u.anon?"匿名":"通常"}</span>`;
+  pName.value=u.name; pBio.value=u.bio; pAnon.checked=u.anon;
+  show("app"); renderDM();
+}
+
+/* ===== プロフィール保存 ===== */
+function saveProfile(){
+  const n=pName.value.trim(); if(!n) return alert("空白不可");
+  const u=users(), cur=me();
+  if(n!==cur && nameTaken(n)) return alert("同名不可");
+  u.forEach(x=>{
+    if(x.name===cur){x.name=n;x.bio=pBio.value;x.anon=pAnon.checked}
+  });
+  saveUsers(u); localStorage.me=n; init();
+}
+
+/* ===== NG処理 ===== */
+function clean(t){
+  NG.forEach(w=>t=t.replace(new RegExp(w,"gi"),"■"));
+  return t;
+}
+
+/* ===== DM送信 ===== */
+function sendDM(){
+  let t=dmText.value.trim(); if(!t) return;
+  t=clean(t);
+  const f=file.files[0];
+  const read=f?new Promise(r=>{const fr=new FileReader();fr.onload=()=>r(fr.result);fr.readAsDataURL(f)}):Promise.resolve("");
+  read.then(data=>{
+    const d=JSON.parse(localStorage.dms||"[]");
+    d.push({id:Date.now(),from:me(),to:to.value,text:enc(t),file:data,time:new Date().toLocaleString()});
+    localStorage.dms=JSON.stringify(d); renderDM();
+  });
+}
+
+/* ===== DM表示 ===== */
+function renderDM(){
+  const u=me(), isA=u===ADMIN;
+  const d=JSON.parse(localStorage.dms||"[]").filter(x=>isA||x.from===u||x.to===u);
+  dmList.innerHTML=d.map(x=>`
+    <div class="dm ${x.from!==u?'anon':''}">
+      <b>${x.from}</b> → <b>${x.to}</b><br>
+      ${dec(x.text)}<br>
+      ${x.file?`<a href="${x.file}" download>添付</a>`:""}
+      <small>${x.time}</small>
+      ${isA?`<button onclick="delDM(${x.id})">🗑</button>`:""}
+    </div>`).join("");
+}
+
+/* ===== DM削除（管理者） ===== */
+function delDM(id){
+  let d=JSON.parse(localStorage.dms||"[]");
+  d=d.filter(x=>x.id!==id);
+  localStorage.dms=JSON.stringify(d); renderDM();
+}
+
+/* ===== アカウント削除 ===== */
+function deleteAccount(name){
+  if(me()!==name && me()!==ADMIN) return alert("権限なし");
+  saveUsers(users().filter(x=>x.name!==name));
+  localStorage.dms=JSON.stringify(
+    JSON.parse(localStorage.dms||"[]").filter(d=>d.from!==name&&d.to!==name)
+  );
+  if(me()===name){localStorage.removeItem("me");location.reload();}
+}
+
+/* ===== DL ===== */
+function downloadDM(){
+  const b=new Blob([localStorage.dms||"[]"],{type:"application/json"});
+  const a=document.createElement("a");
+  a.href=URL.createObjectURL(b); a.download="dm.json"; a.click();
+}
+
+/* 起動 */
+show("reg");
+</script>
+</body>
+</html>
